@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 .env
 do-not-publish/
+images/.ipynb_checkpoints/
