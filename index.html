@@ -339,7 +339,7 @@
 
 <header>
   <h1>🎙 Gemini TTS Playground</h1>
-  <span>Benchmarking latency across 3 models — sub-2s TTFB with 3.1 Flash</span>
+  <span>Benchmarking latency across 5 models — sub-2s TTFB with streaming</span>
 </header>
 
 <main>
@@ -374,9 +374,18 @@
         </button>
         <button class="model-tab active" data-model="C" onclick="selectModel('C')">
           <span class="tab-name">C ⭐</span>
-          <span class="tab-label">Streaming</span>
+          <span class="tab-label">3.1 Stream</span>
+        </button>
+        <button class="model-tab" data-model="D" onclick="selectModel('D')">
+          <span class="tab-name">D</span>
+          <span class="tab-label">2.5 Stream</span>
+        </button>
+        <button class="model-tab" data-model="E" onclick="selectModel('E')">
+          <span class="tab-name">E</span>
+          <span class="tab-label">2.5 Lite</span>
         </button>
       </div>
+      <div id="vertexNote" style="display:none;font-size:0.72rem;color:var(--yellow);margin-top:4px">⚠ D &amp; E require Vertex AI (ADC) — not AI Studio key</div>
     </div>
 
     <div class="field">
@@ -534,9 +543,9 @@
     markup: '[sigh] I completely understand your frustration. [short pause] Let me look into this for you right away. [medium pause] I can see your account here — [whispering] everything looks good from our end. [short pause] Let\'s get this sorted out!',
   };
 
-  const MODEL_QUALITY = { A: 'high', B: 'medium', C: 'high' };
-  const MODEL_NAMES   = { A: 'gemini-2.5-flash-tts', B: 'gemini-2.5-flash-lite-preview-tts', C: 'gemini-3.1-flash-tts-preview' };
-  const MODEL_LABELS  = { A: 'One-Shot', B: 'Chunked (Lite)', C: 'Streaming ⭐' };
+  const MODEL_QUALITY = { A: 'high', B: 'medium', C: 'high', D: 'high', E: 'medium' };
+  const MODEL_NAMES   = { A: 'gemini-2.5-flash-tts', B: 'gemini-2.5-flash-lite-preview-tts', C: 'gemini-3.1-flash-tts-preview', D: 'gemini-2.5-flash-tts', E: 'gemini-2.5-flash-lite-preview-tts' };
+  const MODEL_LABELS  = { A: 'One-Shot', B: 'Chunked (Lite)', C: 'Streaming ⭐', D: 'Streaming (2.5 Flash)', E: 'Streaming (2.5 Lite)' };
 
   // ── UI helpers ─────────────────────────────────────────────────────
   const $ = id => document.getElementById(id);
@@ -546,6 +555,7 @@
     document.querySelectorAll('.model-tab').forEach(t => {
       t.classList.toggle('active', t.dataset.model === m);
     });
+    $('vertexNote').style.display = (m === 'D' || m === 'E') ? 'block' : 'none';
   }
 
   function setSample(key) {
@@ -665,10 +675,10 @@
       setMetric('total',  m.total_time + 's', 'wall clock, request → complete');
       setMetric('dur',    m.audio_duration + 's', 'length of generated speech');
       setMetric('rtf',    m.rtf + 'x', m.rtf >= 1 ? 'faster than real-time ✓' : 'slower than real-time', colorForRTF(m.rtf));
-      setMetric('chunks', m.chunks, selectedModel === 'C' ? 'streaming packets' : 'API calls made');
+      setMetric('chunks', m.chunks, ['C','D','E'].includes(selectedModel) ? 'streaming packets' : 'API calls made');
       setMetric('size',   m.size_kb + ' KB', `PCM16 WAV @ ${m.sample_rate || '24kHz'} mono`);
 
-      const qualityMap = { A: ['high', 'High Quality'], B: ['medium', 'Medium Quality'], C: ['high', 'High Quality'] };
+      const qualityMap = { A: ['high', 'High Quality'], B: ['medium', 'Medium Quality'], C: ['high', 'High Quality'], D: ['high', 'High Quality'], E: ['medium', 'Medium Quality'] };
       const [qClass, qLabel] = qualityMap[selectedModel];
       const instr = $('instrInput').value.trim();
       $('runInfo').innerHTML = `

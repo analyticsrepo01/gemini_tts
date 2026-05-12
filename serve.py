@@ -26,9 +26,11 @@ AUDIO_DIR = Path(os.getenv("AUDIO_DIR", str(Path(__file__).parent / "audio_outpu
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
 MODELS = {
-    "A": ("gemini-2.5-flash-tts",              "One-Shot",       "Full audio before return. Baseline."),
-    "B": ("gemini-2.5-flash-lite-preview-tts", "Chunked (Lite)", "Text split into chunks, stitched."),
-    "C": ("gemini-3.1-flash-tts-preview",      "Streaming ⭐",   "Single stream, sub-2s TTFB."),
+    "A": ("gemini-2.5-flash-tts",              "One-Shot",              "Full audio before return. Baseline."),
+    "B": ("gemini-2.5-flash-lite-preview-tts", "Chunked (Lite)",        "Text split into chunks, stitched."),
+    "C": ("gemini-3.1-flash-tts-preview",      "Streaming ⭐",          "Single stream, sub-2s TTFB."),
+    "D": ("gemini-2.5-flash-tts",              "Streaming (2.5 Flash)", "2.5 Flash via generate_content_stream. Vertex AI only."),
+    "E": ("gemini-2.5-flash-lite-preview-tts", "Streaming (2.5 Lite)",  "2.5 Lite streaming. Auto-chunks >160 words (512-token limit). Vertex AI only."),
 }
 
 VOICES = ["Aoede", "Charon", "Fenrir", "Kore", "Puck", "Orus", "Zephyr", "Leda",
@@ -134,8 +136,8 @@ def run_generation_sync(text: str, model_key: str, voice: str, instruction: str 
             all_pcm += r.candidates[0].content.parts[0].inline_data.data
         return finish(all_pcm, ttfb, time.perf_counter() - t0, len(chunks))
 
-    # ── Option C: streaming ────────────────────────────────────────────────
-    elif model_key == "C":
+    # ── Options C / D: streaming ───────────────────────────────────────────
+    elif model_key in ("C", "D"):
         t0 = time.perf_counter()
         ttfb, all_pcm, n = None, b"", 0
         for chunk in client.models.generate_content_stream(
@@ -151,6 +153,29 @@ def run_generation_sync(text: str, model_key: str, voice: str, instruction: str 
                 ttfb = time.perf_counter() - t0
             all_pcm += pcm
             n += 1
+        return finish(all_pcm, ttfb, time.perf_counter() - t0, n)
+
+    # ── Option E: 2.5-flash-lite streaming with auto-chunk for 512-token limit ──
+    elif model_key == "E":
+        # gemini-2.5-flash-lite-preview-tts has a 512-token (~170 word) limit on Vertex AI
+        parts = split_sentences(text, max_words=150) if len(text.split()) > 160 else [text]
+        t0 = time.perf_counter()
+        ttfb, all_pcm, n = None, b"", 0
+        for part in parts:
+            part_content = apply_instruction(part, instruction) if not ttfb else part
+            for chunk in client.models.generate_content_stream(
+                model=model_name, contents=part_content, config=speech_cfg(voice)
+            ):
+                try:
+                    pcm = chunk.candidates[0].content.parts[0].inline_data.data
+                except (IndexError, AttributeError):
+                    continue
+                if not pcm:
+                    continue
+                if ttfb is None:
+                    ttfb = time.perf_counter() - t0
+                all_pcm += pcm
+                n += 1
         return finish(all_pcm, ttfb, time.perf_counter() - t0, n)
 
 
