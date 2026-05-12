@@ -2,8 +2,6 @@
 
 A web application for benchmarking **Google Gemini Text-to-Speech** models with real-time latency metrics. Built to solve a specific challenge: achieving **sub-2-second Time-to-First-Audio (TTFB)** for telephony and call center applications.
 
-**Live Demo**: [gemini-tts-255766800726.us-central1.run.app](https://gemini-tts-255766800726.us-central1.run.app)
-
 ---
 
 ## Architecture
