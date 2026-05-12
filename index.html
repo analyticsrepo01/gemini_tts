@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gemini TTS Playground</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0d1117;
+    --surface:  #161b22;
+    --border:   #30363d;
+    --text:     #e6edf3;
+    --muted:    #8b949e;
+    --accent:   #58a6ff;
+    --green:    #3fb950;
+    --yellow:   #d29922;
+    --red:      #f85149;
+    --purple:   #bc8cff;
+    --radius:   10px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    padding: 20px 32px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  header h1 { font-size: 1.3rem; font-weight: 600; }
+  header span { font-size: 0.82rem; color: var(--muted); }
+
+  main {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    gap: 0;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Left panel ────────────────────────────────── */
+  .controls {
+    border-right: 1px solid var(--border);
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-y: auto;
+  }
+
+  label { font-size: 0.78rem; color: var(--muted); font-weight: 500; letter-spacing: .03em; text-transform: uppercase; }
+
+  textarea {
+    width: 100%;
+    height: 180px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.92rem;
+    padding: 12px;
+    resize: vertical;
+    line-height: 1.5;
+    outline: none;
+    transition: border-color .15s;
+  }
+  textarea:focus { border-color: var(--accent); }
+
+  /* Model selector tabs */
+  .model-tabs {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .model-tab {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--border);
+    color: var(--muted);
+    padding: 10px 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: background .15s, color .15s;
+    text-align: center;
+    line-height: 1.3;
+  }
+  .model-tab:last-child { border-right: none; }
+  .model-tab:hover { background: var(--surface); color: var(--text); }
+  .model-tab.active {
+    background: var(--accent);
+    color: #0d1117;
+    font-weight: 600;
+  }
+  .model-tab .tab-label { font-size: 0.72rem; display: block; }
+  .model-tab .tab-name { font-size: 0.78rem; font-weight: 600; }
+
+  select {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 9px 12px;
+    font-size: 0.9rem;
+    outline: none;
+    cursor: pointer;
+  }
+  select:focus { border-color: var(--accent); }
+
+  .field { display: flex; flex-direction: column; gap: 6px; }
+
+  /* Sample prompts */
+  .samples { display: flex; flex-direction: column; gap: 6px; }
+  .sample-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    padding: 6px 10px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: border-color .15s, color .15s;
+  }
+  .sample-btn:hover { border-color: var(--accent); color: var(--text); }
+
+  .btn-generate {
+    width: 100%;
+    padding: 12px;
+    background: var(--accent);
+    color: #0d1117;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity .15s, transform .1s;
+  }
+  .btn-generate:hover:not(:disabled) { opacity: .88; }
+  .btn-generate:active:not(:disabled) { transform: scale(0.98); }
+  .btn-generate:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* ── Right panel ────────────────────────────────── */
+  .output {
+    padding: 24px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-y: auto;
+  }
+
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 28px;
+    font-size: 0.88rem;
+    color: var(--muted);
+  }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    flex-shrink: 0;
+    display: none;
+  }
+  .spinner.active { display: block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Progress bar */
+  .progress-wrap {
+    height: 4px;
+    background: var(--surface);
+    border-radius: 2px;
+    overflow: hidden;
+    display: none;
+  }
+  .progress-wrap.active { display: block; }
+  .progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width .3s;
+    width: 0%;
+  }
+  .progress-bar.indeterminate {
+    width: 40% !important;
+    animation: slide 1.2s ease-in-out infinite;
+  }
+  @keyframes slide {
+    0%   { margin-left: -40%; }
+    100% { margin-left: 100%; }
+  }
+
+  /* Metric cards grid */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+
+  .metric-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    transition: border-color .2s;
+  }
+  .metric-card.highlight { border-color: var(--accent); }
+  .metric-card.good    { border-color: var(--green); }
+  .metric-card.warn    { border-color: var(--yellow); }
+  .metric-card.bad     { border-color: var(--red); }
+
+  .metric-label {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    font-weight: 500;
+    margin-bottom: 6px;
+  }
+  .metric-value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    color: var(--text);
+    transition: color .3s;
+  }
+  .metric-value.live { color: var(--accent); }
+  .metric-sub {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  /* approach + model info */
+  .run-info {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    display: none;
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .run-info.visible { display: flex; gap: 24px; flex-wrap: wrap; }
+  .run-info span { color: var(--text); font-weight: 500; }
+
+  /* Audio player */
+  .audio-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .audio-wrap label { font-size: 0.78rem; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .audio-ready-badge {
+    background: var(--green); color: #0d1117;
+    font-size: 0.68rem; font-weight: 700;
+    padding: 2px 8px; border-radius: 20px;
+    display: none;
+  }
+  .audio-ready-badge.visible { display: inline-block; }
+  audio {
+    width: 100%;
+    border-radius: 8px;
+    outline: none;
+  }
+
+  /* error */
+  .error-box {
+    background: #1a0a0a;
+    border: 1px solid var(--red);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    font-size: 0.85rem;
+    color: var(--red);
+    display: none;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .error-box.visible { display: block; }
+
+  /* History list */
+  .history-section { border-top: 1px solid var(--border); padding-top: 16px; }
+  .history-section h3 { font-size: 0.78rem; color: var(--muted); margin-bottom: 10px; text-transform: uppercase; letter-spacing: .05em; }
+  .history-list { display: flex; flex-direction: column; gap: 8px; }
+  .history-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: border-color .15s;
+  }
+  .history-item:hover { border-color: var(--accent); }
+  .history-item .hi-text { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .history-item .hi-meta { color: var(--muted); font-size: 0.72rem; text-align: right; }
+  .history-item .hi-ttfb { color: var(--green); font-weight: 600; }
+
+  /* Quality badge */
+  .quality-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+  .q-high   { background: rgba(63,185,80,.15);  color: var(--green);  }
+  .q-medium { background: rgba(210,153,34,.15); color: var(--yellow); }
+  .q-low    { background: rgba(248,81,73,.12);  color: var(--red);    }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎙 Gemini TTS Playground</h1>
+  <span>Benchmarking latency across 3 models — sub-2s TTFB with 3.1 Flash</span>
+</header>
+
+<main>
+  <!-- ── LEFT: Controls ───────────────────────── -->
+  <aside class="controls">
+
+    <div class="field">
+      <label>Text to Synthesise</label>
+      <textarea id="textInput" placeholder="Type or paste your text here…">Thank you for calling Viamo support. I understand your time is valuable, so let me help you as quickly as possible. Could you please describe the issue you're experiencing today?</textarea>
+    </div>
+
+    <div class="field">
+      <label>Sample Prompts</label>
+      <div class="samples">
+        <button class="sample-btn" onclick="setSample('short')">Short — 1 sentence greeting</button>
+        <button class="sample-btn" onclick="setSample('medium')">Medium — 3 sentence IVR message</button>
+        <button class="sample-btn" onclick="setSample('long')">Long — ~60s agent monologue</button>
+        <button class="sample-btn" onclick="setSample('markup')">Markup tags — [sigh] [whispering] etc.</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Model / Approach</label>
+      <div class="model-tabs">
+        <button class="model-tab" data-model="A" onclick="selectModel('A')">
+          <span class="tab-name">A</span>
+          <span class="tab-label">One-Shot</span>
+        </button>
+        <button class="model-tab" data-model="B" onclick="selectModel('B')">
+          <span class="tab-name">B</span>
+          <span class="tab-label">Chunked</span>
+        </button>
+        <button class="model-tab active" data-model="C" onclick="selectModel('C')">
+          <span class="tab-name">C ⭐</span>
+          <span class="tab-label">Streaming</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Voice</label>
+      <select id="voiceSelect">
+        <option>Aoede</option><option>Charon</option><option>Fenrir</option>
+        <option>Kore</option><option>Puck</option><option>Orus</option>
+        <option>Zephyr</option><option>Leda</option><option>Sulafat</option>
+        <option>Iapetus</option><option>Umbriel</option><option>Algenib</option>
+        <option>Rasalgethi</option>
+      </select>
+    </div>
+
+    <!-- System Instruction -->
+    <div class="field">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <label>System Instruction</label>
+        <button onclick="toggleInstruction()" id="instrToggle"
+          style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:2px 8px;font-size:0.72rem;cursor:pointer">
+          show
+        </button>
+      </div>
+      <div id="instrPanel" style="display:none;flex-direction:column;gap:6px">
+        <textarea id="instrInput" rows="4"
+          style="height:auto"
+          placeholder="e.g. Speak slowly and warmly, like a friendly customer support agent. Use a reassuring tone."></textarea>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="sample-btn" onclick="setInstr('professional')">Professional</button>
+          <button class="sample-btn" onclick="setInstr('warm')">Warm &amp; Friendly</button>
+          <button class="sample-btn" onclick="setInstr('energetic')">Energetic</button>
+          <button class="sample-btn" onclick="setInstr('whisper')">Whisper</button>
+          <button class="sample-btn" onclick="setInstr('news')">News Anchor</button>
+          <button class="sample-btn" onclick="setInstr('')">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Telephony toggle -->
+    <div style="display:flex;align-items:center;justify-content:space-between;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px">
+      <div>
+        <div style="font-size:0.82rem;font-weight:600">Telephony Mode (8kHz)</div>
+        <div style="font-size:0.72rem;color:var(--muted)">Downsample to 8kHz PCMU for call center use</div>
+      </div>
+      <label style="text-transform:none;display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="telephonyToggle" checked style="width:16px;height:16px;cursor:pointer">
+        <span style="font-size:0.8rem" id="telephonyLabel">ON</span>
+      </label>
+    </div>
+
+    <button class="btn-generate" id="genBtn" onclick="generate()">Generate Speech</button>
+
+  </aside>
+
+  <!-- ── RIGHT: Output ────────────────────────── -->
+  <section class="output">
+
+    <!-- Status -->
+    <div class="status-bar">
+      <div class="spinner" id="spinner"></div>
+      <span id="statusMsg">Ready — select a model and click Generate.</span>
+    </div>
+
+    <!-- Progress -->
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+
+    <!-- Error -->
+    <div class="error-box" id="errorBox"></div>
+
+    <!-- Audio player — always visible -->
+    <div class="audio-wrap" id="audioWrap">
+      <label>
+        🔊 Generated Audio
+        <span class="audio-ready-badge" id="audioReadyBadge">READY — CLICK PLAY</span>
+      </label>
+      <audio id="audioPlayer" controls style="width:100%"></audio>
+    </div>
+
+    <!-- Run info -->
+    <div class="run-info" id="runInfo"></div>
+
+    <!-- Metrics -->
+    <div class="metrics-grid">
+      <div class="metric-card" id="card-ttfb">
+        <div class="metric-label">TTFB — Time to First Audio</div>
+        <div class="metric-value" id="val-ttfb">—</div>
+        <div class="metric-sub" id="sub-ttfb">seconds until playback possible</div>
+      </div>
+      <div class="metric-card" id="card-total">
+        <div class="metric-label">Total Generation Time</div>
+        <div class="metric-value" id="val-total">—</div>
+        <div class="metric-sub" id="sub-total">wall clock, request → done</div>
+      </div>
+      <div class="metric-card" id="card-dur">
+        <div class="metric-label">Audio Duration</div>
+        <div class="metric-value" id="val-dur">—</div>
+        <div class="metric-sub">length of generated speech</div>
+      </div>
+      <div class="metric-card" id="card-rtf">
+        <div class="metric-label">Real-time Factor</div>
+        <div class="metric-value" id="val-rtf">—</div>
+        <div class="metric-sub">audio secs / gen secs (>1 = faster than RT)</div>
+      </div>
+      <div class="metric-card" id="card-chunks">
+        <div class="metric-label">Chunks / API Calls</div>
+        <div class="metric-value" id="val-chunks">—</div>
+        <div class="metric-sub">audio packets received</div>
+      </div>
+      <div class="metric-card" id="card-size">
+        <div class="metric-label">Audio Size</div>
+        <div class="metric-value" id="val-size">—</div>
+        <div class="metric-sub">WAV (PCM16 @ 24kHz, mono)</div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="history-section" id="histSection" style="display:none">
+      <h3>Run History</h3>
+      <div class="history-list" id="histList"></div>
+    </div>
+
+  </section>
+</main>
+
+<script>
+  // ── State ──────────────────────────────────────────────────────────
+  let selectedModel = 'C';
+  let history = [];
+
+  const INSTRUCTIONS = {
+    professional: "Speak in a calm, clear, and professional tone. Maintain a formal but approachable register suitable for enterprise customer service.",
+    warm:         "Speak warmly and with genuine empathy. Sound like a caring friend helping someone through a problem — friendly, patient, and reassuring.",
+    energetic:    "Speak with high energy and enthusiasm! Be upbeat, dynamic, and engaging — like a confident presenter at a product launch.",
+    whisper:      "Speak in a soft, intimate whisper. Keep the tone gentle and hushed throughout, as if sharing a secret.",
+    news:         "Speak in the authoritative, measured tone of a professional news anchor. Clear diction, neutral affect, confident delivery.",
+  };
+
+  function toggleInstruction() {
+    const panel = $('instrPanel');
+    const btn   = $('instrToggle');
+    const shown = panel.style.display === 'flex';
+    panel.style.display = shown ? 'none' : 'flex';
+    btn.textContent = shown ? 'show' : 'hide';
+  }
+
+  function setInstr(key) {
+    $('instrInput').value = key ? INSTRUCTIONS[key] : '';
+  }
+
+  const SAMPLES = {
+    short:  'Welcome to Viamo. How can I help you today?',
+    medium: 'Thank you for calling Viamo support. Your call is important to us. Please stay on the line and one of our agents will be with you shortly.',
+    long:   `Good afternoon, and thank you for reaching out to Viamo customer support. My name is Alex, and I'll be your dedicated support specialist today. I understand that your time is valuable, and I want to make sure we resolve your concern as efficiently as possible.\n\nBefore we begin, I'd like to walk you through a few things that might help us get to the root of your issue more quickly. Our support team has access to a range of diagnostic tools that allow us to review your account history, recent transactions, and any prior support interactions you may have had.\n\nWe take data privacy very seriously at Viamo. All the information we access is encrypted and stored in compliance with international data protection regulations, including GDPR and PDPA.\n\nNow, could you please describe the issue you are experiencing today? Whether it's a billing concern, a technical problem, or a question about our services, our team is fully equipped to assist you.`,
+    markup: '[sigh] I completely understand your frustration. [short pause] Let me look into this for you right away. [medium pause] I can see your account here — [whispering] everything looks good from our end. [short pause] Let\'s get this sorted out!',
+  };
+
+  const MODEL_QUALITY = { A: 'high', B: 'medium', C: 'high' };
+  const MODEL_NAMES   = { A: 'gemini-2.5-flash-tts', B: 'gemini-2.5-flash-lite-preview-tts', C: 'gemini-3.1-flash-tts-preview' };
+  const MODEL_LABELS  = { A: 'One-Shot', B: 'Chunked (Lite)', C: 'Streaming ⭐' };
+
+  // ── UI helpers ─────────────────────────────────────────────────────
+  const $ = id => document.getElementById(id);
+
+  function selectModel(m) {
+    selectedModel = m;
+    document.querySelectorAll('.model-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.model === m);
+    });
+  }
+
+  function setSample(key) {
+    $('textInput').value = SAMPLES[key];
+  }
+
+  function setStatus(msg, spinning = false) {
+    $('statusMsg').textContent = msg;
+    $('spinner').classList.toggle('active', spinning);
+  }
+
+  function setMetric(id, value, sub = null, colorClass = null) {
+    const val = $(`val-${id}`);
+    if (val) { val.textContent = value; val.classList.toggle('live', colorClass === 'live'); }
+    const card = $(`card-${id}`);
+    if (card) card.className = 'metric-card' + (colorClass && colorClass !== 'live' ? ` ${colorClass}` : '');
+    const subEl = $(`sub-${id}`);
+    if (sub && subEl) subEl.textContent = sub;
+  }
+
+  function resetMetrics() {
+    ['ttfb','total','dur','rtf','chunks','size'].forEach(id => {
+      setMetric(id, '—', null, null);
+      $(`card-${id}`).className = 'metric-card';
+    });
+    $('audioReadyBadge').classList.remove('visible');
+    $('audioPlayer').src = '';
+    $('runInfo').classList.remove('visible');
+    $('errorBox').classList.remove('visible');
+    $('progressWrap').classList.remove('active');
+    $('progressBar').className = 'progress-bar';
+    $('progressBar').style.width = '0%';
+  }
+
+  function showProgress(pct) {
+    $('progressWrap').classList.add('active');
+    const bar = $('progressBar');
+    if (pct === null) {
+      bar.className = 'progress-bar indeterminate';
+    } else {
+      bar.className = 'progress-bar';
+      bar.style.width = pct + '%';
+    }
+  }
+
+  function colorForTTFB(s) {
+    if (s < 2)  return 'good';
+    if (s < 5)  return 'highlight';
+    if (s < 10) return 'warn';
+    return 'bad';
+  }
+
+  function colorForRTF(r) {
+    if (r >= 5)  return 'good';
+    if (r >= 2)  return 'highlight';
+    if (r >= 1)  return 'warn';
+    return 'bad';
+  }
+
+  function addHistory(text, metrics) {
+    history.unshift({ text, metrics, model: selectedModel, ts: new Date() });
+    if (history.length > 8) history.pop();
+    renderHistory();
+  }
+
+  function renderHistory() {
+    const sec = $('histSection');
+    const list = $('histList');
+    if (history.length === 0) { sec.style.display = 'none'; return; }
+    sec.style.display = 'block';
+    list.innerHTML = history.map((h, i) => `
+      <div class="history-item" onclick="replayHistory(${i})">
+        <div>
+          <div style="font-weight:600;color:var(--text);margin-bottom:2px">${MODEL_LABELS[h.model]}</div>
+          <div class="hi-text">${h.text.slice(0, 80)}${h.text.length > 80 ? '…' : ''}</div>
+        </div>
+        <div class="hi-meta">
+          <div class="hi-ttfb">TTFB ${h.metrics.ttfb}s</div>
+          <div>${h.metrics.audio_duration}s audio</div>
+          <div style="margin-top:2px">${h.ts.toLocaleTimeString()}</div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function replayHistory(i) {
+    const h = history[i];
+    $('textInput').value = h.text;
+    selectModel(h.model);
+  }
+
+  // ── Main generate ─────────────────────────────────────────────────
+  async function generate() {
+    const text  = $('textInput').value.trim();
+    const voice = $('voiceSelect').value;
+    if (!text) { alert('Please enter some text.'); return; }
+
+    $('genBtn').disabled = true;
+    resetMetrics();
+    setStatus('Generating… please wait', true);
+
+    try {
+      const resp = await fetch('./generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, model: selectedModel, voice,
+          instruction: $('instrInput').value.trim(),
+          telephony: $('telephonyToggle').checked }),
+      });
+
+      const ev = await resp.json();
+
+      if (ev.error) throw new Error(ev.error);
+
+      const m = ev.metrics;
+      setMetric('ttfb',   m.ttfb   + 's', m.ttfb < 2 ? '✓ Sub-2s target met!' : 'seconds until first audio', colorForTTFB(m.ttfb));
+      setMetric('total',  m.total_time + 's', 'wall clock, request → complete');
+      setMetric('dur',    m.audio_duration + 's', 'length of generated speech');
+      setMetric('rtf',    m.rtf + 'x', m.rtf >= 1 ? 'faster than real-time ✓' : 'slower than real-time', colorForRTF(m.rtf));
+      setMetric('chunks', m.chunks, selectedModel === 'C' ? 'streaming packets' : 'API calls made');
+      setMetric('size',   m.size_kb + ' KB', `PCM16 WAV @ ${m.sample_rate || '24kHz'} mono`);
+
+      const qualityMap = { A: ['high', 'High Quality'], B: ['medium', 'Medium Quality'], C: ['high', 'High Quality'] };
+      const [qClass, qLabel] = qualityMap[selectedModel];
+      const instr = $('instrInput').value.trim();
+      $('runInfo').innerHTML = `
+        <div>Model <span>${m.model}</span></div>
+        <div>Approach <span>${m.approach}</span></div>
+        <div>Voice <span>${voice}</span></div>
+        <div>Quality <span class="quality-badge q-${qClass}">${qLabel}</span></div>
+        ${instr ? `<div style="width:100%;margin-top:4px;font-size:0.75rem">Prompt <span style="font-style:italic">"${instr.slice(0,80)}${instr.length>80?'…':''}"</span></div>` : ''}
+      `;
+      $('runInfo').classList.add('visible');
+
+      // Load audio from server file URL — works through any proxy
+      $('audioPlayer').src = `./audio/${ev.filename}`;
+      $('audioReadyBadge').classList.add('visible');
+      $('audioPlayer').load();
+      $('audioPlayer').play().catch(() => {});
+
+      setStatus('Done — audio ready ▶', false);
+      addHistory(text, m);
+
+    } catch (e) {
+      $('errorBox').textContent = 'Error: ' + e.message;
+      $('errorBox').classList.add('visible');
+      setStatus('Error.', false);
+    } finally {
+      $('genBtn').disabled = false;
+      $('spinner').classList.remove('active');
+    }
+  }
+
+  $('telephonyToggle').addEventListener('change', function() {
+    $('telephonyLabel').textContent = this.checked ? 'ON' : 'OFF';
+  });
+
+  // enter to generate
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') generate();
+  });
+</script>
+
+</body>
+</html>

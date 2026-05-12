@@ -1,0 +1,4 @@
+fastapi
+uvicorn[standard]
+google-genai>=1.0.0
+google-cloud-texttospeech
