@@ -170,3 +170,241 @@ gemini_tts/
 Built as part of a latency investigation for a telephony TTS pipeline. The key finding: **`gemini-3.1-flash-tts-preview` with streaming (`generate_content_stream`) achieves <2s TTFB** on long-form text, making it viable for real-time call center use without the structural complexity of the Live API.
 
 See `gemini_tts.ipynb` for the full benchmark including Cloud TTS `streaming_synthesize` (Option D).
+
+---
+
+## Best Practices: TTS + Telephony Integration
+
+### Real-Time Call Loop
+
+![Call Loop](images/gemini_tts_call_loop.png)
+
+The full voice AI loop: Caller → Gateway → STT → LLM → TTS → Gateway → Caller. Barge-in (VAD detection) clears the TTS buffer and interrupts playback immediately.
+
+---
+
+### 1. Audio Format
+
+| Network | Codec | Sample Rate | Bytes / 20ms packet |
+|---------|-------|-------------|---------------------|
+| PSTN / Twilio | G.711 PCMU (µ-law) | 8 kHz | 160 bytes |
+| PSTN / ISDN | G.711 PCMA (A-law) | 8 kHz | 160 bytes |
+| HD Voice (VoLTE) | G.722 | 16 kHz | 320 bytes |
+| Vonage WebSocket | L16 PCM | 8 / 16 / 24 kHz | configurable |
+
+**Gemini TTS outputs 24kHz PCM16** — always downsample before sending to a PSTN gateway:
+
+```python
+import array
+
+def downsample_8k(pcm24: bytes) -> bytes:
+    """3:1 decimation: 24kHz → 8kHz PCM16."""
+    samples = array.array('h', pcm24)
+    return array.array('h', samples[::3]).tobytes()
+
+def encode_mulaw(pcm16: bytes) -> bytes:
+    """Convert PCM16 → G.711 µ-law (required by Twilio Media Streams)."""
+    import audioop
+    return audioop.lin2ulaw(pcm16, 2)
+```
+
+**Twilio-specific**: payload must be base64-encoded raw mulaw with **no WAV file header**.
+
+```python
+import base64
+
+def to_twilio_media(pcm24: bytes) -> dict:
+    pcm8 = downsample_8k(pcm24)
+    ulaw = encode_mulaw(pcm8)
+    return {
+        "event": "media",
+        "streamSid": stream_sid,
+        "media": {"payload": base64.b64encode(ulaw).decode()}
+    }
+```
+
+---
+
+### 2. Latency Targets
+
+| Stage | Target | Notes |
+|-------|--------|-------|
+| STT (speech-to-text) | < 300 ms | Cloud STT streaming, end-of-utterance detection |
+| LLM (response gen) | < 500 ms | Start streaming to TTS as tokens arrive |
+| TTS TTFB | **< 2 s** | First audio chunk to gateway |
+| Total turn latency | **< 3 s** | Caller perception threshold for natural conversation |
+
+> **Key insight**: pipeline the stages — don't wait for LLM to finish before starting TTS. Stream LLM tokens into TTS as they arrive for minimum end-to-end latency.
+
+---
+
+### 3. Streaming vs. One-Shot
+
+| Approach | TTFB | When to use |
+|----------|------|-------------|
+| One-shot (`generate_content`) | 10–30 s | Async voicemail, non-real-time |
+| Chunked (split text → sequential calls) | 5–15 s | Fallback when streaming unavailable |
+| **Streaming** (`generate_content_stream`) | **< 2 s** | All real-time telephony |
+
+Always use streaming for live calls. The caller hears audio before generation is complete.
+
+---
+
+### 4. Text Chunking (for non-streaming fallback)
+
+```python
+import re
+
+def split_sentences(text: str, max_words: int = 40) -> list[str]:
+    """Split at sentence boundaries, respecting API 4KB limit."""
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    chunks, current, wc = [], [], 0
+    for s in sentences:
+        w = len(s.split())
+        if wc + w > max_words and current:
+            chunks.append(" ".join(current))
+            current, wc = [s], w
+        else:
+            current.append(s)
+            wc += w
+    if current:
+        chunks.append(" ".join(current))
+    return chunks or [text]
+```
+
+- Split at **sentence boundaries** (`[.!?]`), not words — cuts mid-word produce audible glitches
+- Apply style instruction to **first chunk only** to avoid repetition artifacts
+- Gemini TTS limit: **4,000 bytes** per text field, **8,000 bytes** combined with prompt
+
+---
+
+### 5. Barge-In (Caller Interrupts TTS)
+
+Barge-in is the most critical UX feature. When the STT engine detects speech, immediately clear the audio buffer:
+
+**Twilio:**
+```python
+ws.send(json.dumps({"event": "clear", "streamSid": stream_sid}))
+```
+
+**Vonage:**
+```python
+ws.send(json.dumps({"event": "clear"}))
+```
+
+Architecture pattern:
+1. STT runs in parallel with TTS playback
+2. On `speech_start` or `activity_start` event → send `clear` to gateway
+3. Cancel any in-flight TTS streaming generator
+4. Hand control back to STT to collect the full utterance
+
+```python
+import asyncio
+
+async def handle_barge_in(gateway_ws, tts_task: asyncio.Task):
+    # Called when VAD detects caller speaking
+    tts_task.cancel()
+    await gateway_ws.send_json({"event": "clear", "streamSid": stream_sid})
+```
+
+---
+
+### 6. Style Control & Markup Tags
+
+TTS models **do not support `system_instruction`** in the config — prepend style guidance to the content:
+
+```python
+def apply_instruction(text: str, instruction: str) -> str:
+    if not instruction.strip():
+        return text
+    return f"{instruction.strip()}\n\nNow say the following:\n{text}"
+```
+
+For maximum predictability, keep **style prompt + text content + markup tags semantically consistent**.
+
+**Supported markup (Model C / `gemini-3.1-flash-tts-preview` only):**
+
+```
+[sigh] I understand your frustration. [short pause]
+Let me look into that [whispering] right away.
+[medium pause] Great news — [energetic] we got it sorted!
+```
+
+| Category | Tags |
+|----------|------|
+| Non-speech sounds | `[sigh]` `[laughing]` `[uhm]` |
+| Style | `[sarcasm]` `[robotic]` `[shouting]` `[whispering]` `[extremely fast]` |
+| Pacing | `[short pause]` `[medium pause]` `[long pause]` |
+
+---
+
+### 7. RTP Packetization & Jitter Buffers
+
+For direct SIP/RTP integration (bypassing WebSocket gateways):
+
+- **Packet size**: 20ms standard (160 bytes mulaw at 8kHz)
+- **Packetization**: split the PCM stream into 160-byte (mulaw) or 320-byte (L16 8kHz) chunks
+- **Jitter buffer**: add 20–60ms at the receiving end to absorb network jitter
+- **Timestamp**: increment RTP timestamp by 160 per packet (at 8kHz)
+- **SSRC**: keep constant for a single TTS stream
+
+```python
+def packetize_mulaw(ulaw: bytes, packet_ms: int = 20) -> list[bytes]:
+    """Split mulaw stream into RTP-sized packets (160 bytes = 20ms at 8kHz)."""
+    size = 8 * packet_ms  # 8 samples/ms at 8kHz
+    return [ulaw[i:i+size] for i in range(0, len(ulaw), size)]
+```
+
+---
+
+### 8. Error Handling & Fallback
+
+```python
+async def generate_with_fallback(text: str, voice: str, fallback_voice: str = "Aoede"):
+    try:
+        return await asyncio.wait_for(
+            generate_tts(text, voice),
+            timeout=5.0  # abort if first chunk takes > 5s
+        )
+    except asyncio.TimeoutError:
+        # Log and retry with fallback voice
+        return await generate_tts(text, fallback_voice)
+    except Exception as e:
+        # Final fallback: pre-recorded error message
+        return load_static_audio("error_please_hold.wav")
+```
+
+- Set a **5s hard timeout** on TTFB — if first chunk doesn't arrive, fall back
+- Keep a library of **pre-recorded fallback phrases** for error states
+- **Retry once** on transient API errors before falling back
+- Log TTFB per call to detect model degradation
+
+---
+
+### 9. Gemini TTS Model Selection
+
+| Model | TTFB | Cost | Best for |
+|-------|------|------|----------|
+| `gemini-3.1-flash-tts-preview` | **< 2s** | Low | Real-time telephony ⭐ |
+| `gemini-2.5-flash-tts` | ~10–30s | Low | Async, voicemail |
+| `gemini-2.5-flash-lite-preview-tts` | ~5–15s (chunked) | Lowest | Cost-sensitive, non-RT |
+| `gemini-2.5-pro-tts` | ~30s+ | High | Audiobooks, podcasts |
+
+**API selection:**
+- **Vertex AI** (`generate_content_stream`) — unified with Gemini, temperature control, streaming PCM 24kHz
+- **Cloud TTS** (`streaming_synthesize`) — use if migrating from Chirp 3 HD, supports MULAW/ALAW output directly
+
+---
+
+### 10. Anti-Patterns to Avoid
+
+| Anti-Pattern | Problem | Fix |
+|---|---|---|
+| Wait for full audio before sending | Adds 10–30s latency | Stream chunks as they arrive |
+| Send WAV header in Twilio payload | Garbled audio | Strip header, send raw mulaw bytes |
+| Apply style instruction to every chunk | Repetition artifacts | Apply to first chunk only |
+| Use `system_instruction` config field | 400 INVALID_ARGUMENT | Prepend to content text instead |
+| Chunk at word boundaries | Audible glitches | Always split at sentence boundaries |
+| No barge-in implementation | Caller can't interrupt | Clear buffer on VAD speech_start |
+| No timeout on TTS TTFB | Hanging calls | 5s timeout, then fallback audio |
+| Single retry on network error | Silent failures | Exponential backoff + fallback voice |
