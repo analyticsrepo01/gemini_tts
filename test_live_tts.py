@@ -10,8 +10,9 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 
-API_KEY = os.getenv("GEMINI_API_KEY", "REDACTED")
-client  = genai.Client(api_key=API_KEY)
+API_KEY = os.getenv("GEMINI_API_KEY", "")
+client  = (genai.Client(api_key=API_KEY) if API_KEY
+           else genai.Client(vertexai=True, project="my-project-0004-346516", location="global"))
 
 SAMPLE_RATE = 24000
 SAMPLE_W    = 2
